@@ -1,0 +1,29 @@
+{
+  "name": "name-dancer",
+  "version": "1.0.0",
+  "description": "SNI-based balancer",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "gypkg build --insecure"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/indutny/name-dancer.git"
+  },
+  "keywords": [
+    "sni",
+    "balancer",
+    "dancer",
+    "name"
+  ],
+  "author": "Fedor Indutny <fedor@indutny.com> (http://darksi.de/)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/indutny/name-dancer/issues"
+  },
+  "homepage": "https://github.com/indutny/name-dancer#readme",
+  "dependencies": {
+    "gypkg": "^2.7.7"
+  }
+}
