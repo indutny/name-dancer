@@ -13,14 +13,38 @@ static void dancer_parser_close(uv_link_t* link, uv_link_t* source,
 void dancer_parser_alloc_cb(uv_link_t* link,
                             size_t suggested_size,
                             uv_buf_t* buf) {
-  return uv_link_propagate_alloc_cb(link, suggested_size, buf);
+  dancer_parser_t* p;
+  size_t avail;
+  char* data;
+
+  p = link->data;
+  if (p->state == kDancerParserStateStream)
+    return uv_link_propagate_alloc_cb(link, suggested_size, buf);
+
+  avail = suggested_size;
+  data = ringbuffer_write_ptr(&p->buffer, &avail);
+
+  *buf = uv_buf_init(data, avail);
 }
 
 
 void dancer_parser_read_cb(uv_link_t* link,
                            ssize_t nread,
                            const uv_buf_t* buf) {
-  return uv_link_propagate_read_cb(link, nread, buf);
+  dancer_parser_t* p;
+
+  p = link->data;
+  if (p->state == kDancerParserStateStream)
+    return uv_link_propagate_read_cb(link, nread, buf);
+
+  /* Propagate errors */
+  if (nread <= 0) {
+    uv_buf_t tmp;
+    uv_link_propagate_alloc_cb(link, 1, &tmp);
+    return uv_link_propagate_read_cb(link, nread, &tmp);
+  }
+
+  ringbuffer_write_append(&p->buffer, nread);
 }
 
 
@@ -44,6 +68,7 @@ int dancer_parser_init(dancer_parser_t* parser, dancer_parser_cb cb) {
   if (err != 0)
     return err;
 
+  parser->state = kDancerParserStateBuffer;
   parser->link.data = parser;
 
   parser->cb = cb;
