@@ -24,7 +24,9 @@ enum dancer_client_init_e {
   kDancerClientInitProxy,
   kDancerClientInitLinkIncoming,
   kDancerClientInitLinkParser,
-  kDancerClientInitLinkUpstream
+  kDancerClientInitLinkUpstream,
+
+  kDancerClientInitialized = kDancerClientInitLinkUpstream
 };
 typedef enum dancer_client_init_e dancer_client_init_t;
 

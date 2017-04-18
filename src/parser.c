@@ -6,7 +6,7 @@ static void dancer_parser_close(uv_link_t* link, uv_link_t* source,
 
   p = link->data;
   ringbuffer_destroy(&p->buffer);
-  cb(NULL);
+  cb(source);
 }
 
 

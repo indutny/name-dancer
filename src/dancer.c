@@ -15,17 +15,31 @@ static const int kDancerBacklog = 127;
   } while (0)
 
 
+static void dancer_client_proxy_close_cb(uv_proxy_t* p) {
+  dancer_client_t* c;
+
+  c = p->data;
+  free(c);
+}
+
+
+static void dancer_client_close(dancer_client_t* client, int err) {
+  if (client->init == kDancerClientInitialized)
+    return uv_proxy_close(&client->proxy, dancer_client_proxy_close_cb);
+
+  /* TODO(indutny): implement me */
+  abort();
+}
+
+
 static void dancer_client_proxy_error(uv_proxy_t* proxy, uv_link_t* side,
                                       int err) {
   dancer_client_t* c;
 
   c = proxy->data;
-}
 
-
-static void dancer_client_close(dancer_client_t* client, int err) {
-  /* TODO(indutny): implement me */
-  abort();
+  LOG("proxy err=%d", err);
+  dancer_client_close(c, err);
 }
 
 
@@ -50,7 +64,9 @@ static int dancer_client_init_side(dancer_client_t* client,
 }
 
 
-static void dancer_client_parser_cb(dancer_parser_t* p, const char* name) {
+static void dancer_client_parser_cb(dancer_parser_t* p, const char* name,
+                                    unsigned int name_len) {
+  LOG("SNI=%.*s", name_len, name);
 }
 
 

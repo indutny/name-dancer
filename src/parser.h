@@ -5,7 +5,8 @@
 #include "ringbuffer.h"
 
 typedef struct dancer_parser_s dancer_parser_t;
-typedef void (*dancer_parser_cb)(dancer_parser_t* parser, const char* name);
+typedef void (*dancer_parser_cb)(dancer_parser_t* parser, const char* name,
+                                 unsigned int name_len);
 
 struct dancer_parser_s {
   uv_link_t link;
