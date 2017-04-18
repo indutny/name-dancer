@@ -8,134 +8,150 @@
 static const int kDancerBacklog = 127;
 
 
-static void dancer_client_close_cb(uv_handle_t* handle) {
-  dancer_client_t* client;
+#define LOG(...)                                                              \
+  do {                                                                        \
+    fprintf(stderr, "LOG: " __VA_ARGS__);                                     \
+    fprintf(stderr, "\n");                                                    \
+  } while (0)
 
-  client = handle->data;
-  handle->data = NULL;
 
-  /* Still closing */
-  if (client->incoming.tcp.data != NULL || client->upstream.tcp.data != NULL)
-    return;
+static void dancer_client_proxy_error(uv_proxy_t* proxy, uv_link_t* side,
+                                      int err) {
+  dancer_client_t* c;
 
-  ringbuffer_destroy(&client->buffer);
-  free(client);
+  c = proxy->data;
 }
 
 
-static void dancer_client_close(dancer_client_t* client) {
-  if (client->incoming.tcp.data != NULL)
-    uv_close((uv_handle_t*) &client->incoming.tcp, dancer_client_close_cb);
-  if (client->upstream.tcp.data != NULL)
-    uv_close((uv_handle_t*) &client->upstream.tcp, dancer_client_close_cb);
+static void dancer_client_close(dancer_client_t* client, int err) {
+  /* TODO(indutny): implement me */
+  abort();
 }
 
 
-static void dancer_client_shutdown(dancer_client_t* client) {
-}
-
-
-static void dancer_client_alloc_cb(uv_handle_t* handle,
-                                   size_t suggested_size,
-                                   uv_buf_t* buf) {
-  dancer_client_t* client;
-  size_t avail;
-  char* ptr;
-
-  client = handle->data;
-
-  avail = 0;
-  ptr = ringbuffer_write_ptr(&client->buffer, &avail);
-  *buf = uv_buf_init(ptr, avail);
-}
-
-
-static void dancer_client_read_cb(uv_stream_t* stream,
-                                  ssize_t nread,
-                                  const uv_buf_t* buf) {
-  dancer_client_t* client;
+static int dancer_client_init_side(dancer_client_t* client,
+                                   dancer_side_t* side) {
   int err;
 
-  client = stream->data;
-  if (nread >= 0)
-    err = ringbuffer_write_append(&client->buffer, nread);
-  else
-    err = 0;
-
+  err = uv_tcp_init(client->state->loop, &side->tcp);
   if (err != 0)
-    return dancer_client_close(client);
+    return err;
 
-  if (nread == UV_EOF)
-    dancer_client_shutdown(client);
+  side->init = kDancerSideInitTCP;
+
+  err = uv_link_source_init(&side->source, (uv_stream_t*) &side->tcp);
+  if (err != 0)
+    return err;
+
+  side->init = kDancerSideInitSource;
+
+  side->source.data = client;
+  return 0;
+}
+
+
+static void dancer_client_parser_cb(dancer_parser_t* p, const char* name) {
 }
 
 
 static void dancer_conn_cb(uv_stream_t* server, int status) {
-  int err;
   dancer_t* st;
   dancer_client_t* client;
+  int err;
 
   st = server->data;
 
-  client = malloc(sizeof(*client));
-  if (client == NULL)
-    goto fail;
+  client = calloc(1, sizeof(*client));
+  if (client == NULL) {
+    LOG("failed to allocate client");
+    return;
+  }
 
-  client->st = st;
-  ringbuffer_init(&client->buffer);
+  client->state = st;
 
-  client->incoming.tcp.data = NULL;
-  client->upstream.tcp.data = NULL;
-
-  err = uv_tcp_init(st->loop, &client->incoming.tcp);
+  err = dancer_client_init_side(client, &client->incoming);
   if (err != 0)
     goto fail;
 
-  client->incoming.tcp.data = client;
-
-  err = uv_tcp_init(st->loop, &client->upstream.tcp);
+  err = dancer_client_init_side(client, &client->upstream);
   if (err != 0)
-    goto fail_async;
+    goto fail;
 
-  client->upstream.tcp.data = client;
-
-  err = uv_accept((uv_stream_t*) server, (uv_stream_t*) &client->incoming.tcp);
+  err = dancer_parser_init(&client->parser, dancer_client_parser_cb);
   if (err != 0)
-    goto fail_async;
+    goto fail;
+  client->init = kDancerClientInitBuffer;
 
-  uv_read_start((uv_stream_t*) &client->incoming.tcp, dancer_client_alloc_cb,
-                dancer_client_read_cb);
+  err = uv_proxy_init(&client->proxy, dancer_client_proxy_error);
+  if (err != 0)
+    goto fail;
+
+  client->init = kDancerClientInitProxy;
+  client->proxy.data = client;
+
+  /* Incoming -> Parser */
+  err = uv_link_chain((uv_link_t*) &client->incoming.source,
+                      &client->parser.link);
+  if (err != 0)
+    goto fail;
+  client->init = kDancerClientInitLinkIncoming;
+
+  /* Parser -> Proxy.left */
+  err = uv_link_chain(&client->parser.link, &client->proxy.left);
+  if (err != 0)
+    goto fail;
+  client->init = kDancerClientInitLinkParser;
+
+  /* Upstream -> Proxy.right */
+  err = uv_link_chain((uv_link_t*) &client->upstream.source,
+                      &client->proxy.right);
+  if (err != 0)
+    goto fail;
+  client->init = kDancerClientInitLinkUpstream;
+
+  err = uv_accept(server, (uv_stream_t*) &client->incoming.tcp);
+  if (err != 0)
+    goto fail;
+
+  err = uv_link_read_start((uv_link_t*) &client->proxy.left);
+  if (err != 0)
+    goto fail;
 
   return;
 
-fail_async:
-  dancer_client_close(client);
-  client = NULL;
-
 fail:
-  free(client);
-
-  /* TODO(indutny): log */
-  fprintf(stderr, "failed to accept\n");
+  dancer_client_close(client, err);
 }
 
 
 int dancer_init(dancer_t* st, dancer_options_t* options) {
   int err;
-  struct sockaddr_in addr;
+  struct sockaddr_storage addr;
+  struct sockaddr_in* addr4;
+  struct sockaddr_in6* addr6;
+
+  addr4 = (struct sockaddr_in*) &addr;
+  addr6 = (struct sockaddr_in6*) &addr;
 
   st->loop = options->loop;
 
   st->server.data = st;
 
-  /* TODO(indutny): ipv6 */
   memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(options->port);
 
-  err = uv_inet_pton(AF_INET, options->host, &addr.sin_addr);
-  if (err != 0)
-    return err;
+  /* Try both IPv4 and IPv6 parsers */
+  err = uv_inet_pton(AF_INET, options->host, &addr4->sin_addr);
+  if (err == 0) {
+    addr4->sin_family = AF_INET;
+    addr4->sin_port = htons(options->port);
+  } else {
+    err = uv_inet_pton(AF_INET6, options->host, &addr6->sin6_addr);
+    if (err != 0)
+      return err;
+
+    addr6->sin6_family = AF_INET6;
+    addr6->sin6_port = htons(options->port);
+  }
 
   err = uv_tcp_init(st->loop, &st->server);
   if (err != 0)
@@ -154,11 +170,6 @@ int dancer_init(dancer_t* st, dancer_options_t* options) {
 fail_bind:
   uv_close((uv_handle_t*) &st->server, NULL);
   return err;
-}
-
-
-void dancer_run(dancer_t* st) {
-  uv_run(st->loop, UV_RUN_DEFAULT);
 }
 
 

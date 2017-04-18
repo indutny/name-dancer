@@ -10,7 +10,7 @@ int main() {
   dancer_options_t opts;
 
   opts.loop = uv_default_loop();
-  opts.host = "0.0.0.0";
+  opts.host = "::";
   opts.port = 1443;
 
   err = dancer_init(&st, &opts);
@@ -20,7 +20,8 @@ int main() {
     return -1;
   }
 
-  dancer_run(&st);
+  uv_run(opts.loop, UV_RUN_DEFAULT);
+
   dancer_destroy(&st);
 
   return 0;
