@@ -66,7 +66,15 @@ static int dancer_client_init_side(dancer_client_t* client,
 
 static void dancer_client_parser_cb(dancer_parser_t* p, const char* name,
                                     unsigned int name_len) {
+  dancer_client_t* client;
+  int err;
+
+  client = p->data;
   LOG("SNI=%.*s", name_len, name);
+
+  err = dancer_parser_stream(p);
+  if (err != 0)
+    return dancer_client_close(client, err);
 }
 
 
@@ -97,6 +105,7 @@ static void dancer_conn_cb(uv_stream_t* server, int status) {
   if (err != 0)
     goto fail;
   client->init = kDancerClientInitBuffer;
+  client->parser.data = client;
 
   err = uv_proxy_init(&client->proxy, dancer_client_proxy_error);
   if (err != 0)

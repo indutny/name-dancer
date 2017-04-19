@@ -17,6 +17,7 @@ typedef enum dancer_parser_state_e dancer_parser_state_t;
 
 struct dancer_parser_s {
   uv_link_t link;
+  void* data;
 
   /* Private */
   dancer_parser_state_t state;

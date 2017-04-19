@@ -42,6 +42,8 @@ static int dancer_parser_run_sni(dancer_parser_t* parser,
   uint8_t name_type;
   uint16_t name_len;
   uint16_t len;
+  dancer_parser_cb cb;
+  int err;
 
   ENSURE(2);
   len = (buf[0] << 8) | buf[1];
@@ -56,7 +58,14 @@ static int dancer_parser_run_sni(dancer_parser_t* parser,
 
   ENSURE(name_len);
 
-  parser->cb(parser, (const char*) buf, name_len);
+  err = uv_link_read_stop(&parser->link);
+  if (err != 0)
+    return err;
+
+  cb = parser->cb;
+  parser->cb = NULL;
+
+  cb(parser, (const char*) buf, name_len);
   return 0;
 
 invalid:
@@ -71,6 +80,9 @@ static int dancer_parser_run(dancer_parser_t* parser) {
   ssl_version_t version;
   unsigned int len;
   unsigned int off;
+
+  if (parser->cb == NULL)
+    return 0;
 
   max_len = parser->off;
   hard_max = sizeof(parser->buffer);
@@ -285,7 +297,7 @@ int dancer_parser_stream(dancer_parser_t* parser) {
     off += to_copy;
   }
 
-  if (parser->off != sizeof(parser->buffer))
+  if (parser->off != sizeof(parser->buffer) && parser->cb != NULL)
     return 0;
 
   return uv_link_read_start(parser->link.parent);
