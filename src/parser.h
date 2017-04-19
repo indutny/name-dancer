@@ -2,7 +2,8 @@
 #define SRC_PARSER_H_
 
 #include "uv_link_t.h"
-#include "ringbuffer.h"
+
+#define DANCER_PARSER_MAX_HELLO 16384
 
 typedef struct dancer_parser_s dancer_parser_t;
 typedef void (*dancer_parser_cb)(dancer_parser_t* parser, const char* name,
@@ -20,9 +21,13 @@ struct dancer_parser_s {
   /* Private */
   dancer_parser_state_t state;
   dancer_parser_cb cb;
-  ringbuffer buffer;
+
+  /* TODO(indutny): allocate/deallocate this */
+  unsigned char buffer[DANCER_PARSER_MAX_HELLO];
+  unsigned int off;
 };
 
 int dancer_parser_init(dancer_parser_t* parser, dancer_parser_cb cb);
+int dancer_parser_stream(dancer_parser_t* parser);
 
 #endif  /* SRC_PARSER_H_ */
