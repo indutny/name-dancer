@@ -51,6 +51,7 @@ struct dancer_client_s {
   dancer_t* state;
 
   uv_proxy_t proxy;
+  uv_connect_t connect;
   dancer_side_t incoming;
   dancer_side_t upstream;
   dancer_parser_t parser;

@@ -24,6 +24,7 @@ static void dancer_client_proxy_close_cb(uv_proxy_t* p) {
 
 
 static void dancer_client_close(dancer_client_t* client, int err) {
+  LOG("close err=%d", err);
   if (client->init == kDancerClientInitialized)
     return uv_proxy_close(&client->proxy, dancer_client_proxy_close_cb);
 
@@ -64,17 +65,87 @@ static int dancer_client_init_side(dancer_client_t* client,
 }
 
 
+static int dancer_pton(struct sockaddr_storage* addr, const char* ip,
+                       size_t ip_len, int port) {
+  char tmp[1024];
+  struct sockaddr_in* addr4;
+  struct sockaddr_in6* addr6;
+  int err;
+
+  memset(addr, 0, sizeof(*addr));
+  addr4 = (struct sockaddr_in*) addr;
+  addr6 = (struct sockaddr_in6*) addr;
+
+  /* TODO(indutny): check return value */
+  snprintf(tmp, sizeof(tmp), "%.*s", (int) ip_len, ip);
+
+  /* Try both IPv4 and IPv6 parsers */
+  err = uv_inet_pton(AF_INET, tmp, &addr4->sin_addr);
+  if (err == 0) {
+    addr4->sin_family = AF_INET;
+    addr4->sin_port = htons(port);
+  } else {
+    err = uv_inet_pton(AF_INET6, tmp, &addr6->sin6_addr);
+    if (err != 0)
+      return err;
+
+    addr6->sin6_family = AF_INET6;
+    addr6->sin6_port = htons(port);
+  }
+
+  return 0;
+}
+
+
+static void dancer_client_connect_cb(uv_connect_t* req, int status) {
+  dancer_client_t* client;
+  int err;
+
+  client = req->data;
+
+  if (status == UV_ECANCELED)
+    return;
+  if (status != 0)
+    return dancer_client_close(client, status);
+
+  LOG("connected to upstream");
+
+  err = dancer_parser_stream(&client->parser);
+  if (err != 0)
+    return dancer_client_close(client, err);
+
+  err = uv_link_read_start((uv_link_t*) &client->proxy.right);
+  if (err != 0)
+    return dancer_client_close(client, err);
+}
+
+
 static void dancer_client_parser_cb(dancer_parser_t* p, const char* name,
                                     unsigned int name_len) {
   dancer_client_t* client;
+  const char* ip;
+  struct sockaddr_storage addr;
   int err;
 
   client = p->data;
   LOG("SNI=%.*s", name_len, name);
 
-  err = dancer_parser_stream(p);
+  if (name_len == 14 && strncmp("www.google.com", name, name_len) == 0)
+    ip = "172.217.10.36";
+  else if (name_len == 16 && strncmp("www.facebook.com", name, name_len) == 0)
+    ip = "31.13.69.228";
+  else
+    return dancer_client_close(client, UV_EINVAL);
+
+  err = dancer_pton(&addr, ip, strlen(ip), 443);
   if (err != 0)
     return dancer_client_close(client, err);
+
+  err = uv_tcp_connect(&client->connect, &client->upstream.tcp,
+                       (struct sockaddr*) &addr, dancer_client_connect_cb);
+  if (err != 0)
+    return dancer_client_close(client, err);
+  client->connect.data = client;
 }
 
 
@@ -152,31 +223,14 @@ fail:
 int dancer_init(dancer_t* st, dancer_options_t* options) {
   int err;
   struct sockaddr_storage addr;
-  struct sockaddr_in* addr4;
-  struct sockaddr_in6* addr6;
-
-  addr4 = (struct sockaddr_in*) &addr;
-  addr6 = (struct sockaddr_in6*) &addr;
 
   st->loop = options->loop;
 
+  err = dancer_pton(&addr, options->host, strlen(options->host), options->port);
+  if (err != 0)
+    return err;
+
   st->server.data = st;
-
-  memset(&addr, 0, sizeof(addr));
-
-  /* Try both IPv4 and IPv6 parsers */
-  err = uv_inet_pton(AF_INET, options->host, &addr4->sin_addr);
-  if (err == 0) {
-    addr4->sin_family = AF_INET;
-    addr4->sin_port = htons(options->port);
-  } else {
-    err = uv_inet_pton(AF_INET6, options->host, &addr6->sin6_addr);
-    if (err != 0)
-      return err;
-
-    addr6->sin6_family = AF_INET6;
-    addr6->sin6_port = htons(options->port);
-  }
 
   err = uv_tcp_init(st->loop, &st->server);
   if (err != 0)
